@@ -369,11 +369,11 @@ def verify():
             miss.append(w)
             print(f"  {w:16s} → （查不到）")
             continue
-        via = f"  ←{e['via']}" if e.get("via") else ""
-        first = e["trans"].split("\n")[0][:60]
+        via = f"  ←{e.via}" if e.via else ""
+        first = e.trans.split("\n")[0][:60]
         print(f"  {w:16s} → {first}{via}")
-        if e.get("phonetic"):
-            print(f"  {'':16s}   [{e['phonetic']}]")
+        if e.phonetic:
+            print(f"  {'':16s}   [{e.phonetic}]")
     print(f"\n  查得 {len(SAMPLES)-len(miss)}/{len(SAMPLES)}"
           + (f"，查不到：{miss}" if miss else ""))
 

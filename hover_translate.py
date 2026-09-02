@@ -31,6 +31,8 @@ import time
 import traceback
 from ctypes import wintypes
 
+from dictionary_models import WordEntry
+
 # 這支程式刻意不 import 任何網路模組（urllib / socket / requests）。
 # 字典是本地的，執行期零連線 —— 拿防火牆擋死它也照常運作。
 
@@ -396,6 +398,8 @@ SUFFIX_RULES = [
 class LocalDict:
     """ECDICT 建成的本地字典。纯文件查询，运行时不联网。"""
 
+    name = "local-ecdict"
+
     def __init__(self, db_path=DICT_PATH, fix_path=FIX_PATH, use_fixes=None):
         if not os.path.exists(db_path):
             raise FileNotFoundError(
@@ -526,12 +530,20 @@ class LocalDict:
 
         trans = "\n".join(senses)   # trans 一律由 senses 產生，兩者不能各說各話
 
-        return {
-            "word": word, "disp": disp or word, "phonetic": phonetic or "",
-            "trans": trans, "senses": senses, "pos": pos or "",
-            "collins": collins or 0, "frq": frq or 0, "tag": tag or "",
-            "via": via if via and via != key else None,
-        }
+        lemma = via if via and via != key else key
+        return WordEntry(
+            word=word,
+            display=disp or word,
+            lemma=lemma,
+            part_of_speech=pos or "",
+            phonetic=phonetic or "",
+            meanings_zh_cn=tuple(senses),
+            provider=self.name,
+            collins=collins or 0,
+            frequency=frq or 0,
+            tags=tuple((tag or "").split()),
+            via=via if via and via != key else None,
+        )
 
     @staticmethod
     def speakable(sense):
@@ -737,18 +749,18 @@ class Overlay:
             pass
 
     def show(self, x, y, entry, sentence, miss_word=None):
-        """entry 為 LocalDict.lookup 的結果；查不到時傳 None 並給 miss_word。"""
+        """entry 为 DictionaryProvider.lookup 的结果；查不到时传 None。"""
         if entry:
-            word = entry["disp"]
-            phon = (f"[{entry['phonetic']}]"
-                    if self.cfg["show_phonetic"] and entry["phonetic"] else "")
-            if entry.get("via"):
-                phon += f"{'  ' if phon else ''}← {entry['via']}"   # 詞形還原的原型
-            senses = entry["senses"][:max(1, self.cfg["max_senses"])]
+            word = entry.display
+            phon = (f"[{entry.phonetic}]"
+                    if self.cfg["show_phonetic"] and entry.phonetic else "")
+            if entry.via:
+                phon += f"{'  ' if phon else ''}← {entry.via}"   # 詞形還原的原型
+            senses = entry.meanings_zh_cn[:max(1, self.cfg["max_senses"])]
             main = senses[0] if senses else ""
             rest = "\n".join(senses[1:])
-            stars = "★" * entry["collins"] if self.cfg["show_stars"] else ""
-            exams = " · ".join(self.EXAM_LABEL.get(t, t) for t in entry["tag"].split()
+            stars = "★" * entry.collins if self.cfg["show_stars"] else ""
+            exams = " · ".join(self.EXAM_LABEL.get(t, t) for t in entry.tags
                                if t in self.cfg["exam_tags"])
         else:
             word, phon, main, rest, stars, exams = \
@@ -1004,8 +1016,8 @@ class App:
 
         self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
 
-        if entry and self.cfg["speak_chinese"] and entry["senses"]:
-            zh = self.dict.speakable(entry["senses"][0])
+        if entry and self.cfg["speak_chinese"] and entry.meanings_zh_cn:
+            zh = self.dict.speakable(entry.meanings_zh_cn[0])
             if zh:
                 self.speaker.say(gen, self.cfg["chinese_voice"], zh, self.cfg["chinese_rate"])
         log(f"total {int((time.time()-t0)*1000)}ms")
