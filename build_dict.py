@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""build_dict — 把 ECDICT 建成本地繁體離線字典 dict.db。
+"""build_dict — 把 ECDICT 建成本地离线字典 dict.db。
 
 這支程式**只在建字典時跑一次**，是整個專案唯一會連網的地方。
 建完之後 hover_translate.py 執行期完全不連網，這支和兩個來源 csv 都可以刪掉。
 
-  python build_dict.py            # 缺檔才下載，然後建 dict.db
-  python build_dict.py --verify   # 只驗證現有 dict.db，不重建
+  python build_dict.py               # 默认保留 ECDICT 简体释义
+  python build_dict.py --traditional # 可选：转换为繁体台湾用语
+  python build_dict.py --verify      # 只验证现有 dict.db，不重建
 
 來源：github.com/skywind3000/ECDICT（MIT）
   ecdict.csv    62.9 MB  詞條本體
@@ -241,7 +242,7 @@ def load_lemma():
 INFLECTED_KEYS = set("pdi3rts")
 
 
-def build():
+def build(traditional=False):
     print("\n[1/5] 取得來源檔")
     download("ecdict.csv", CSV_PATH)
     download("lemma.en.txt", LEMMA_PATH)
@@ -250,9 +251,13 @@ def build():
     lemma = load_lemma()
     print(f"  lemma.en.txt: {len(lemma):,} 條")
 
-    print("\n[3/5] 讀取 ECDICT 並簡轉繁（s2twp）")
-    import opencc
-    cc = opencc.OpenCC("s2twp")
+    if traditional:
+        print("\n[3/5] 读取 ECDICT 并转换为繁体台湾用语（s2twp）")
+        import opencc
+        convert_translation = opencc.OpenCC("s2twp").convert
+    else:
+        print("\n[3/5] 读取 ECDICT（保留简体中文释义）")
+        convert_translation = lambda text: text
 
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
@@ -307,7 +312,7 @@ def build():
                     return 0
 
             rows.append((key, word, (r.get("phonetic") or "").strip(),
-                         cc.convert(trans.replace("\\n", "\n")),
+                         convert_translation(trans.replace("\\n", "\n")),
                          (r.get("pos") or "").strip(),
                          num(r.get("collins")), num(r.get("frq")),
                          (r.get("tag") or "").strip()))
@@ -332,12 +337,14 @@ def build():
     db.commit()
     db.close()
 
-    if not os.path.exists(FIX_PATH):
+    if traditional and not os.path.exists(FIX_PATH):
         with open(FIX_PATH, "w", encoding="utf-8") as f:
             f.write(DEFAULT_FIXES)
         print(f"  已產生 {os.path.basename(FIX_PATH)}")
-    else:
+    elif traditional:
         print(f"  {os.path.basename(FIX_PATH)} 已存在，保留你的修改")
+    else:
+        print("  简体模式不启用台湾用语修正表")
 
     print(f"\n[5/5] dict.db 建立完成："
           f"{os.path.getsize(DB_PATH)/1048576:.1f} MB")
@@ -395,5 +402,5 @@ if __name__ == "__main__":
     elif "--verify" in sys.argv:
         verify()
     else:
-        build()
+        build(traditional="--traditional" in sys.argv)
         verify()

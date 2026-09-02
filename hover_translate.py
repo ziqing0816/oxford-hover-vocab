@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-hover_translate — 滑鼠指到螢幕上的英文，唸出英文發音，再用繁體中文說出翻譯。
+hover_translate — 鼠标指向屏幕上的英文，朗读英文发音，并显示简体中文释义。
 
 運作流程：
   按住 Ctrl，滑鼠停在英文字上約 400ms
@@ -9,7 +9,7 @@ hover_translate — 滑鼠指到螢幕上的英文，唸出英文發音，再用
     → Windows 內建 OCR 取出單字與其座標，挑出游標正下方那個字
     → SAPI 英文語音唸單字（Zira）
     → 查本機 dict.db（ECDICT 建成的繁體離線字典），套用用語修正.txt
-    → 浮窗顯示（單字/音標/義項/整句），SAPI 繁中語音唸出釋義（Hanhan）
+    → 浮窗显示（单词/音标/释义/原句），SAPI 简中语音朗读释义（Huihui）
 
 熱鍵：Esc 連按兩下 結束   Ctrl+Alt+H 暫停/恢復   Ctrl+Alt+Q 結束
 
@@ -74,12 +74,12 @@ DEFAULT_CONFIG = {
     "capture_width": 900,         # 擷取範圍（實體像素，以游標為中心）
     "capture_height": 90,
     "ocr_scale": 2,               # OCR 前放大倍率，小字建議 2
-    "ocr_language": "auto",       # auto / en-US / zh-Hant-TW
+    "ocr_language": "auto",       # auto / en-US / en-GB / zh-Hans-CN
     "speak_english": True,
     "speak_chinese": True,
     "speak_sentence_english": False,   # 連整句英文一起唸（練聽力再開）
     "english_voice": "Zira",
-    "chinese_voice": "Hanhan",
+    "chinese_voice": "Huihui",
     "english_rate": 0,            # -10 ~ 10
     "chinese_rate": 0,
     # Esc 結束程式。Esc 是日常最常按的鍵之一，而這是全域監聽，所以預設要連按
@@ -103,6 +103,7 @@ DEFAULT_CONFIG = {
     "font_size_trans": 17,
     "font_size_note": 11,
     "min_word_len": 2,
+    "use_term_fixes": False,       # True 时启用上游台湾繁体术语修正表
     "debug": False,
 }
 
@@ -112,7 +113,12 @@ def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg.update(json.load(f))
+                saved = json.load(f)
+                cfg.update(saved)
+                # 从上游繁体版升级时，自动切换到本机常见的简中语音。
+                # 用户明确改成其他语音名称时保持其选择。
+                if saved.get("chinese_voice") == "Hanhan":
+                    cfg["chinese_voice"] = "Huihui"
         except Exception as e:
             print(f"[warn] config.json 讀取失敗，使用預設值：{e}")
     else:
@@ -303,7 +309,7 @@ class Ocr:
 
         avail = [l.language_tag for l in OcrEngine.available_recognizer_languages]
         order = ([lang_pref] if lang_pref != "auto" else []) + \
-                ["en-US", "en-GB", "zh-Hant-TW", "zh-Hant", "zh-Hans-CN"]
+                ["en-US", "en-GB", "zh-Hans-CN", "zh-Hans", "zh-Hant-TW", "zh-Hant"]
         self.engine, self.lang = None, None
         for tag in order:
             if any(a.lower().startswith(tag.lower().split("-")[0]) or a.lower() == tag.lower()
@@ -374,8 +380,9 @@ def pick_word(result, px, py, min_len):
 POS_PREFIX = re.compile(r"^\s*(?:\[[^\]]{1,12}\]|[a-z]{1,5}\.)\s*", re.I)
 # 「run的過去式」這種釋義只說明形態、沒給字義，要再追查原型把真正的意思補上。
 INFLECTION_ONLY = re.compile(
-    r"的(?:過去式|過去分詞|現在分詞|第三人稱單數|複數形?|比較級|最高級"
-    r"|ing形式|ed形式|名詞複數)")
+    r"的(?:過去式|过去式|過去分詞|过去分词|現在分詞|现在分词|"
+    r"第三人稱單數|第三人称单数|複數形?|复数形?|比較級|比较级|"
+    r"最高級|最高级|ing形式|ed形式|名詞複數|名词复数)")
 # 詞形還原的保底規則：lemma 表沒收錄時，照英文構詞規律回推原型。
 SUFFIX_RULES = [
     ("ies", "y"), ("ied", "y"), ("ier", "y"), ("iest", "y"),
@@ -387,15 +394,17 @@ SUFFIX_RULES = [
 
 
 class LocalDict:
-    """ECDICT 建成的本地繁體字典。純檔案查詢，永遠不連網。"""
+    """ECDICT 建成的本地字典。纯文件查询，运行时不联网。"""
 
-    def __init__(self, db_path=DICT_PATH, fix_path=FIX_PATH):
+    def __init__(self, db_path=DICT_PATH, fix_path=FIX_PATH, use_fixes=None):
         if not os.path.exists(db_path):
             raise FileNotFoundError(
                 f"找不到字典 {db_path}\n請先執行： python build_dict.py")
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.lock = threading.Lock()
-        self.fixes = self._load_fixes(fix_path)
+        if use_fixes is None:
+            use_fixes = bool(CFG.get("use_term_fixes", False))
+        self.fixes = self._load_fixes(fix_path) if use_fixes else []
 
     @staticmethod
     def _load_fixes(path):
@@ -648,7 +657,7 @@ class Overlay:
         self.body = tk.Frame(self.win, bg=self.BG)
         self.body.pack(fill="both", expand=True)
 
-        zh = "Microsoft JhengHei UI"
+        zh = "Microsoft YaHei UI"
         n = cfg["font_size_note"]
         # 標題行平常是英文單字，用 Segoe UI；但 toast 是中文，要換成中文字體，
         # 否則會走字體 fallback，字重與行高都跑掉。

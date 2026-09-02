@@ -95,14 +95,14 @@ check("字典載入", n > 500000, f"{n:,} 詞、修正表 {len(d.fixes)} 條")
 t = time.time()
 e = d.lookup(TARGET)
 ms = (time.time() - t) * 1000
-check("直查命中", e is not None and "粒線體" in e["trans"],
+check("直查命中简体释义", e is not None and "线粒体" in e["trans"],
       f"{TARGET} → {e['senses'][0] if e else None}  ({ms:.1f}ms)")
 check("附帶音標", bool(e and e["phonetic"]), f"[{e['phonetic']}]" if e else "")
 
-check("台灣用語修正：線粒體→粒線體", bool(e) and "線粒體" not in e["trans"])
+check("默认不执行简转繁", bool(e) and "粒線體" not in e["trans"])
 las = d.lookup("laser")
-check("台灣用語修正：鐳射→雷射",
-      bool(las) and "雷射" in las["trans"] and "鐳射" not in las["trans"],
+check("保留简体激光释义",
+      bool(las) and ("激光" in las["trans"] or "镭射" in las["trans"]),
       las["senses"][0] if las else "")
 
 ran = d.lookup("ran")
@@ -160,7 +160,7 @@ print("\n5) SAPI 語音")
 sp = H.Speaker(H.CFG)
 check("Speaker 執行緒就緒", sp.ready.wait(timeout=10))
 check(f"找到英文語音 {H.CFG['english_voice']!r}", sp._find_voice(H.CFG["english_voice"]))
-check(f"找到繁中語音 {H.CFG['chinese_voice']!r}", sp._find_voice(H.CFG["chinese_voice"]))
+check(f"找到简中语音 {H.CFG['chinese_voice']!r}", sp._find_voice(H.CFG["chinese_voice"]))
 print(f"       系統語音：{getattr(sp, 'voice_names', [])}")
 if AUDIO and e:
     print("       播放中…")
@@ -230,7 +230,7 @@ ov.toast(500, 400, "再按一次 Esc 結束")
 r2.update()
 check("toast 單行提示可顯示", ov.l_word.cget("text") == "再按一次 Esc 結束"
       and bool(ov.win.winfo_viewable()))
-check("toast 切成中文字體", "JhengHei" in str(ov.l_word.cget("font")),
+check("toast 切成简体中文字体", "YaHei" in str(ov.l_word.cget("font")),
       str(ov.l_word.cget("font")))
 time.sleep(0.6)
 

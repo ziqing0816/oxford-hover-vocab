@@ -8,4 +8,4 @@ winsdk==1.0.0b10       # Windows.Media.Ocr — 系統內建 OCR，單字級座�
 pywin32==312           # SAPI.SpVoice 語音合成、WScript.Shell 建捷徑
 
 # --- 只有 build_dict.py 建字典時需要，建完可解除安裝 ---
-opencc-python-reimplemented==0.1.7   # 簡轉繁（s2twp，台灣用詞）
+opencc-python-reimplemented==0.1.7   # 仅供 build_dict.py --traditional 兼容模式使用
