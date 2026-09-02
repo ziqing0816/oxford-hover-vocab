@@ -167,6 +167,14 @@ class VocabularyStore:
             """, (stamp, max(1, int(limit)))).fetchall()
         return [dict(row) for row in rows]
 
+    def all(self):
+        with self._lock:
+            rows = self.db.execute("""
+                SELECT * FROM vocabulary
+                ORDER BY last_seen_at DESC, lemma
+            """).fetchall()
+        return [dict(row) for row in rows]
+
     def review(self, lemma, rating, now=None):
         """记录 again/hard/good/easy，并计算下次复习时间。"""
         if rating not in {"again", "hard", "good", "easy"}:
