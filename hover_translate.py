@@ -34,6 +34,7 @@ from ctypes import wintypes
 from dictionary_models import WordEntry
 from oxford_provider import OxfordCredentialsMissing, OxfordDictionaryProvider
 from provider_chain import FallbackDictionaryProvider
+from vocabulary_store import VocabularyStore
 
 # 网络实现隔离在 oxford_provider.py；本文件不直接处理 HTTP 或认证凭据。
 
@@ -70,6 +71,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DICT_PATH = os.path.join(BASE_DIR, "dict.db")
 FIX_PATH = os.path.join(BASE_DIR, "用語修正.txt")
+VOCAB_PATH = os.path.join(BASE_DIR, "vocabulary.db")
 
 DEFAULT_CONFIG = {
     "modifier": "ctrl",           # ctrl / alt / shift / none（none = 純停留，會很吵）
@@ -106,6 +108,8 @@ DEFAULT_CONFIG = {
     "max_english_definitions": 2,
     "max_synonyms": 8,
     "max_examples": 1,
+    "auto_save_vocabulary": True,
+    "save_context_sentence": True,  # 原句只保存在本机，不发送给 Oxford
     "hide_after_ms": 6000,
     "font_size_word": 20,
     "font_size_trans": 17,
@@ -913,6 +917,11 @@ class App:
             except OxfordCredentialsMissing:
                 print("  Oxford：未配置凭据，当前使用离线词典", flush=True)
 
+        self.vocab = (VocabularyStore(VOCAB_PATH)
+                      if self.cfg["auto_save_vocabulary"] else None)
+        if self.vocab:
+            print(f"  生词库：{self.vocab.count():,} 个词（仅保存在本机）", flush=True)
+
         self.speaker = Speaker(self.cfg)
         self.speaker.ready.wait(timeout=8)
         if getattr(self.speaker, "voice_names", None):
@@ -1053,6 +1062,10 @@ class App:
 
         gen = self.speaker.new_generation()
         entry = self.local_dict.lookup(word)    # 先立即显示本地结果，不等待网络
+        context = sentence if self.cfg["save_context_sentence"] else ""
+        saved_locally = bool(entry and self.vocab)
+        if saved_locally:
+            self.vocab.record_lookup(entry, context)
 
         if self.cfg["speak_english"]:
             self.speaker.say(gen, self.cfg["english_voice"], word, self.cfg["english_rate"])
@@ -1065,7 +1078,7 @@ class App:
         if self.enriched_dict:
             threading.Thread(
                 target=self._enrich_online,
-                args=(gen, pos, word, sentence), daemon=True).start()
+                args=(gen, pos, word, sentence, saved_locally), daemon=True).start()
 
         if entry and self.cfg["speak_chinese"] and entry.meanings_zh_cn:
             zh = self.local_dict.speakable(entry.meanings_zh_cn[0])
@@ -1073,15 +1086,21 @@ class App:
                 self.speaker.say(gen, self.cfg["chinese_voice"], zh, self.cfg["chinese_rate"])
         log(f"total {int((time.time()-t0)*1000)}ms")
 
-    def _enrich_online(self, generation, pos, word, sentence):
+    def _enrich_online(self, generation, pos, word, sentence, saved_locally):
         """后台补充 Oxford 内容；旧查询完成时不覆盖较新的浮窗。"""
         entry = self.enriched_dict.lookup(word)
+        if self.enriched_dict.last_error:
+            log("Oxford fallback", type(self.enriched_dict.last_error).__name__)
+            return
+        if entry and self.vocab:
+            if saved_locally:
+                self.vocab.enrich(entry)
+            else:
+                context = sentence if self.cfg["save_context_sentence"] else ""
+                self.vocab.record_lookup(entry, context)
         with self.speaker.gen_lock:
             still_current = generation == self.speaker.gen
         if not still_current:
-            return
-        if self.enriched_dict.last_error:
-            log("Oxford fallback", type(self.enriched_dict.last_error).__name__)
             return
         if entry and (entry.definitions_en or entry.synonyms or entry.examples):
             self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
@@ -1093,6 +1112,8 @@ class App:
             pass
         finally:
             self.running = False
+            if self.vocab:
+                self.vocab.close()
 
 
 def main():
