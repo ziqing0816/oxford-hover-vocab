@@ -225,9 +225,23 @@ check("沒有整句時分隔線收起", not ov.sep.winfo_ismapped())
 ov.show(500, 400, e, SENTENCE)
 r2.update()
 time.sleep(1.0)
+
+enriched = WordEntry(
+    word="apple", display="apple", lemma="apple", part_of_speech="Noun",
+    phonetic="ˈap(ə)l", meanings_zh_cn=("n. 苹果",),
+    definitions_en=("A round fruit.", "The tree bearing this fruit."),
+    synonyms=("fruit", "pome"), examples=("She ate an apple.",),
+    provider="test",
+)
+ov.show(500, 400, enriched, SENTENCE)
+r2.update()
+check("显示 Oxford 英英释义", "A round fruit" in ov.l_definition.cget("text"))
+check("显示 Oxford 同义词", "fruit" in ov.l_synonyms.cget("text"))
+check("显示 Oxford 例句", "She ate an apple" in ov.l_example.cget("text"))
+
 ov.show(500, 400, None, SENTENCE, miss_word="zzzqqx")
 r2.update()
-check("查無此字仍能顯示", "查無" in ov.l_trans.cget("text"), ov.l_trans.cget("text"))
+check("查无此字仍能显示", "查无" in ov.l_trans.cget("text"), ov.l_trans.cget("text"))
 time.sleep(0.6)
 ov.toast(500, 400, "再按一次 Esc 結束")
 r2.update()
@@ -243,7 +257,9 @@ check("停止浮窗文字正確", ov.l_word.cget("text") == "即時翻譯停止"
 check("停止浮窗用警示色", str(ov.l_word.cget("fg")).lower() == ov.FG_STOP.lower(),
       ov.l_word.cget("fg"))
 check("toast 收起所有查詢用的列",
-      not any(w.winfo_ismapped() for w in (ov.l_alts, ov.sep, ov.l_sent, ov.foot)))
+      not any(w.winfo_ismapped() for w in (
+          ov.l_alts, ov.l_definition, ov.l_synonyms, ov.l_example,
+          ov.sep, ov.l_sent, ov.foot)))
 time.sleep(1.0)
 
 ov.show(500, 400, e, SENTENCE)

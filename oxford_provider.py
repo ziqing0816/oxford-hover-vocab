@@ -9,6 +9,7 @@
 import json
 import os
 import re
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -73,6 +74,8 @@ class OxfordDictionaryProvider:
         self.language = language
         self.timeout = timeout
         self._transport = transport or self._request_json
+        self._cache = {}
+        self._cache_lock = threading.Lock()
 
     @classmethod
     def from_env(cls, **kwargs):
@@ -105,6 +108,17 @@ class OxfordDictionaryProvider:
         query = word.strip().lower()
         if not VALID_WORD.fullmatch(query):
             return None
+        # Oxford Sandbox 的英文数据只覆盖 A 开头的词。提前拦截可以避免白白消耗额度。
+        if "sandbox" in self.base_url.lower() and not query.startswith("a"):
+            return None
+        with self._cache_lock:
+            if query in self._cache:
+                return self._cache[query]
+            entry = self._lookup_uncached(query)
+            self._cache[query] = entry
+            return entry
+
+    def _lookup_uncached(self, query):
         params = urlencode({"q": query})
         url = f"{self.base_url}/words/{quote(self.language, safe='-')}?{params}"
         payload = self._transport(

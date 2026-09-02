@@ -70,6 +70,25 @@ class OxfordProviderTests(unittest.TestCase):
         provider = OxfordDictionaryProvider("id", "key", transport=fail_transport)
         self.assertIsNone(provider.lookup("two words"))
 
+    def test_sandbox_skips_non_a_words(self):
+        def fail_transport(*_args):
+            self.fail("Sandbox 不应查询非 A 开头的英文词")
+
+        provider = OxfordDictionaryProvider("id", "key", transport=fail_transport)
+        self.assertIsNone(provider.lookup("banana"))
+
+    def test_repeated_word_uses_memory_cache(self):
+        calls = []
+
+        def transport(*_args):
+            calls.append(1)
+            return FIXTURE
+
+        provider = OxfordDictionaryProvider("id", "key", transport=transport)
+        self.assertIsNotNone(provider.lookup("apple"))
+        self.assertIsNotNone(provider.lookup("APPLE"))
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

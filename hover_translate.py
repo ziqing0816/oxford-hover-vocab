@@ -8,14 +8,14 @@ hover_translate — 鼠标指向屏幕上的英文，朗读英文发音，并显
     → BitBlt 擷取游標周圍畫面（含 2x 放大，小字才認得出來）
     → Windows 內建 OCR 取出單字與其座標，挑出游標正下方那個字
     → SAPI 英文語音唸單字（Zira）
-    → 查本機 dict.db（ECDICT 建成的繁體離線字典），套用用語修正.txt
-    → 浮窗显示（单词/音标/释义/原句），SAPI 简中语音朗读释义（Huihui）
+    → 立即查询本地 ECDICT 并显示简体释义
+    → 可选后台查询 Oxford 官方 API，补充英英释义、同义词与例句
+    → Oxford 不可用时保持本地结果，SAPI 简中语音朗读释义（Huihui）
 
 熱鍵：Esc 連按兩下 結束   Ctrl+Alt+H 暫停/恢復   Ctrl+Alt+Q 結束
 
-這支程式執行期不連線，也刻意不 import 任何網路模組。唯一會連網的是
-build_dict.py（只在建字典時跑一次）。若要改動本檔，請維持這個性質 ——
-selftest.py 有兩道測試在守。
+Oxford 连接是可选功能，只发送规范化后的单词；截图和原句不会外传。没有凭据、
+断网或接口失败时自动保留本地查询结果。
 """
 
 import asyncio
@@ -32,9 +32,10 @@ import traceback
 from ctypes import wintypes
 
 from dictionary_models import WordEntry
+from oxford_provider import OxfordCredentialsMissing, OxfordDictionaryProvider
+from provider_chain import FallbackDictionaryProvider
 
-# 這支程式刻意不 import 任何網路模組（urllib / socket / requests）。
-# 字典是本地的，執行期零連線 —— 拿防火牆擋死它也照常運作。
+# 网络实现隔离在 oxford_provider.py；本文件不直接处理 HTTP 或认证凭据。
 
 # 用 pythonw.exe 啟動（桌面捷徑）時沒有主控台，sys.stdout 是 None，所有訊息會
 # 石沉大海。這時改寫進 hover_translate.log，否則出事完全無從查起。
@@ -100,6 +101,11 @@ DEFAULT_CONFIG = {
     # ECDICT 沒有多益(TOEIC)資料，所以這裡放不進「多益」。
     "exam_tags": ["toefl", "ielts", "gre"],
     "max_senses": 4,              # 最多顯示幾個義項
+    "use_oxford": True,           # 有环境变量凭据时启用 Oxford；失败自动回退本地
+    "oxford_timeout_seconds": 8,
+    "max_english_definitions": 2,
+    "max_synonyms": 8,
+    "max_examples": 1,
     "hide_after_ms": 6000,
     "font_size_word": 20,
     "font_size_trans": 17,
@@ -696,6 +702,16 @@ class Overlay:
                                anchor="w", wraplength=self.WRAP, font=(zh, n + 2))
         self.l_alts.pack(fill="x", padx=PAD, pady=(6, 0))
 
+        self.l_definition = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_WORD, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI", n + 1))
+        self.l_synonyms = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_SENSE, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI", n))
+        self.l_example = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_NOTE, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI Italic", n))
+
         self.sep = tk.Frame(self.body, bg=self.DIVIDER, height=1)
         self.l_sent = tk.Label(self.body, bg=self.BG, fg=self.FG_NOTE, justify="left",
                                anchor="w", wraplength=self.WRAP, font=(zh, n))
@@ -759,12 +775,19 @@ class Overlay:
             senses = entry.meanings_zh_cn[:max(1, self.cfg["max_senses"])]
             main = senses[0] if senses else ""
             rest = "\n".join(senses[1:])
+            definitions = entry.definitions_en[:max(
+                0, int(self.cfg["max_english_definitions"]))]
+            definition = "\n".join(f"• {text}" for text in definitions)
+            syns = entry.synonyms[:max(0, int(self.cfg["max_synonyms"]))]
+            synonyms = f"Synonyms: {', '.join(syns)}" if syns else ""
+            example_items = entry.examples[:max(0, int(self.cfg["max_examples"]))]
+            example = f"Example: {example_items[0]}" if example_items else ""
             stars = "★" * entry.collins if self.cfg["show_stars"] else ""
             exams = " · ".join(self.EXAM_LABEL.get(t, t) for t in entry.tags
                                if t in self.cfg["exam_tags"])
         else:
-            word, phon, main, rest, stars, exams = \
-                (miss_word or ""), "", "（字典查無此字）", "", "", ""
+            word, phon, main, rest, definition, synonyms, example, stars, exams = \
+                (miss_word or ""), "", "（字典查无此字）", "", "", "", "", "", ""
 
         self.l_word.config(text=word, font=self.font_word_en, fg=self.FG_WORD)
         self.l_phon.config(text=phon)
@@ -772,6 +795,15 @@ class Overlay:
         self.l_alts.config(text=rest)
         self.l_alts.pack_forget() if not rest else self.l_alts.pack(
             fill="x", padx=self.PAD, pady=(6, 0), after=self.l_trans)
+
+        for label, text in ((self.l_definition, definition),
+                            (self.l_synonyms, synonyms),
+                            (self.l_example, example)):
+            label.config(text=text)
+            if text:
+                label.pack(fill="x", padx=self.PAD, pady=(6, 0))
+            else:
+                label.pack_forget()
 
         # 整句只作為上下文顯示，不翻譯、不外傳。有內容才畫分隔線。
         s = sentence if (self.cfg["show_sentence"] and sentence) else ""
@@ -802,6 +834,9 @@ class Overlay:
         self.l_phon.config(text="")
         self.l_trans.config(text="")
         self.l_alts.pack_forget()
+        self.l_definition.pack_forget()
+        self.l_synonyms.pack_forget()
+        self.l_example.pack_forget()
         self.sep.pack_forget()
         self.l_sent.pack_forget()
         self.foot.pack_forget()
@@ -863,9 +898,20 @@ class App:
         self.ocr = Ocr(self.cfg["ocr_language"])
         print(f"  OCR 引擎語言：{self.ocr.lang}   可用：{self.ocr.available}", flush=True)
 
-        self.dict = LocalDict(DICT_PATH, FIX_PATH)
-        print(f"  離線字典：{self.dict.count():,} 詞"
-              f"，台灣用語修正 {len(self.dict.fixes)} 條", flush=True)
+        self.local_dict = LocalDict(DICT_PATH, FIX_PATH)
+        self.dict = self.local_dict
+        self.enriched_dict = None
+        print(f"  离线字典：{self.local_dict.count():,} 词"
+              f"，术语修正 {len(self.local_dict.fixes)} 条", flush=True)
+        if self.cfg["use_oxford"]:
+            try:
+                oxford = OxfordDictionaryProvider.from_env(
+                    timeout=float(self.cfg["oxford_timeout_seconds"]))
+                self.enriched_dict = FallbackDictionaryProvider(
+                    oxford, self.local_dict)
+                print("  Oxford：已启用（失败时自动使用离线词典）", flush=True)
+            except OxfordCredentialsMissing:
+                print("  Oxford：未配置凭据，当前使用离线词典", flush=True)
 
         self.speaker = Speaker(self.cfg)
         self.speaker.ready.wait(timeout=8)
@@ -1006,7 +1052,7 @@ class App:
             return
 
         gen = self.speaker.new_generation()
-        entry = self.dict.lookup(word)          # 本地查詢，0ms，不連線
+        entry = self.local_dict.lookup(word)    # 先立即显示本地结果，不等待网络
 
         if self.cfg["speak_english"]:
             self.speaker.say(gen, self.cfg["english_voice"], word, self.cfg["english_rate"])
@@ -1016,11 +1062,29 @@ class App:
 
         self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
 
+        if self.enriched_dict:
+            threading.Thread(
+                target=self._enrich_online,
+                args=(gen, pos, word, sentence), daemon=True).start()
+
         if entry and self.cfg["speak_chinese"] and entry.meanings_zh_cn:
-            zh = self.dict.speakable(entry.meanings_zh_cn[0])
+            zh = self.local_dict.speakable(entry.meanings_zh_cn[0])
             if zh:
                 self.speaker.say(gen, self.cfg["chinese_voice"], zh, self.cfg["chinese_rate"])
         log(f"total {int((time.time()-t0)*1000)}ms")
+
+    def _enrich_online(self, generation, pos, word, sentence):
+        """后台补充 Oxford 内容；旧查询完成时不覆盖较新的浮窗。"""
+        entry = self.enriched_dict.lookup(word)
+        with self.speaker.gen_lock:
+            still_current = generation == self.speaker.gen
+        if not still_current:
+            return
+        if self.enriched_dict.last_error:
+            log("Oxford fallback", type(self.enriched_dict.last_error).__name__)
+            return
+        if entry and (entry.definitions_en or entry.synonyms or entry.examples):
+            self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
 
     def run(self):
         try:
