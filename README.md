@@ -1,275 +1,158 @@
-# 即時翻譯 hover-translate
+# Oxford Hover Vocab
 
-> **完全離線的螢幕取詞字典** · offline hover dictionary for Windows
+Windows 全局划词、Oxford 英英释义、简体中文辅助解释和本地间隔复习工具。
 
-**按住 `Ctrl`，滑鼠停在螢幕上任何英文字上約 0.4 秒** —— 唸出英文發音、跳出音標與繁體中文釋義、再用繁中語音說出意思。
+本项目 fork 自 [AFA7777/hover-translate](https://github.com/AFA7777/hover-translate)，保留其屏幕 OCR、鼠标定位、离线词典和语音能力，并增加可选 Oxford 官方 API、生词自动保存、复习文档与卡片界面。
 
-*[English](README.en.md)*
+## 可以做什么
 
-![主畫面](docs/hero.png)
+- 在 PDF、网页、图片、视频字幕等任意电脑界面取词；
+- 显示音标、简体中文释义和当前原句；
+- 可选显示 Oxford 英英释义、同义词、反义词与例句；
+- 使用 Windows 本地语音朗读英文和简体中文；
+- 按原形自动去重并保存生词；
+- 生成 Markdown 复习文档和 Excel 可打开的 CSV；
+- 使用“不认识 / 困难 / 认识 / 简单”进行间隔复习；
+- Oxford 不可用时自动保留本地查询结果。
 
-任何視窗都有效：PDF、影片字幕、圖片裡的字、遊戲介面、無法選取的文字。因為它讀的是**螢幕畫面**，不是文字選取。
+## 工作流程
 
-## 跟其他螢幕翻譯工具的差別
-
-| | 這個專案 | 常見的螢幕翻譯工具 |
-|---|---|---|
-| **網路** | 執行期**零連線**，防火牆擋死照常運作 | 打雲端翻譯 API（Google / 騰訊雲…） |
-| **隱私** | 你查的字不會離開這台電腦 | 每個查詢都送到第三方伺服器 |
-| **中文** | **繁體台灣用語**，104 條人工校正（粒線體、雷射、微中子…） | 多為簡體或中國用語 |
-| **OCR** | Windows 內建引擎，**下載只有 331 KB** | PaddleOCR 等，模型動輒上百 MB |
-| **發音** | 英文＋繁中雙語朗讀（SAPI，離線） | 多半只翻譯不朗讀 |
-| **延遲** | 查詢 0.03ms | 網路來回 100–500ms |
-
-代價是**沒有上下文判斷** —— 字典列出所有義項，不會像線上翻譯那樣依語境挑一個。查生字很好用，翻長句不是它的守備範圍。
-
----
-
-## 這支程式做什麼、不做什麼
-
-會截取螢幕的工具本來就該被懷疑，所以先把話講清楚：
-
-| 項目 | 狀況 |
-|---|---|
-| 記錄鍵盤 | **不會**。只輪詢觸發鍵（預設 Ctrl，可設為 Alt 或 Shift）與 H / Q / Esc 的**按下狀態**，不讀取也不記錄任何按鍵內容 |
-| 對外連線 | **主程式不會**。`hover_translate.py` 沒有任何網路模組，可用防火牆驗證。**但 `build_dict.py` 會**（見下） |
-| 螢幕擷取 | 只在你按住觸發鍵並停留時，抓一次游標周圍 900×90 像素。不錄影、預設不存檔 |
-| 磁碟殘留 | 正常使用下**無**（不存查詢紀錄，字典唯讀）。**但 `debug: true` 例外**，見下方警告 |
-| 系統管理員權限 | **不需要** |
-| 開機自動啟動 | **不會**。不寫登錄檔、不註冊服務、不建排程 |
-
-**關於連線，講精確一點：**
-
-- **`hover_translate.py`（你日常執行的主程式）** —— 原始碼裡 `urllib` / `socket` / `http` / `requests` / `ssl` 一律不存在。`selftest.py` 有兩道測試在守：封鎖 `socket.socket` 後查詢仍須成功、掃描原始碼確認無網路模組。
-- **`build_dict.py`（只在建字典時跑一次）** —— 使用 `urllib.request` 從 GitHub 下載 ECDICT。這是整個專案唯一的連線點，建完可以刪掉這支程式。
-
-> ### ⚠️ `debug: true` 會把畫面文字寫進磁碟
->
-> 開啟除錯模式後，程式會記錄 OCR 辨識到的單字與該行前 60 個字元。用桌面捷徑（無主控台）啟動時，這些內容會寫入 `hover_translate.log`。
->
-> **請勿在顯示成績、個資、密碼或機密文件的畫面上開啟 `debug`。** 平常維持預設的 `false` 即可，用完記得關掉並刪除 `hover_translate.log`。
-
----
-
-## 安裝
-
-需要 **Windows 10/11** 與 **Python 3.8+**。
-
-```bash
-git clone https://github.com/AFA7777/hover-translate.git
-cd hover-translate
-python install.py
+```text
+按住 Ctrl 并将鼠标停在英文单词上
+        ↓
+截取光标附近的小范围画面
+        ↓
+Windows OCR 定位英文单词
+        ↓
+本地 ECDICT 立即显示简体释义
+        ↓
+Oxford API 在后台补充英英释义（可选）
+        ↓
+保存到本地 vocabulary.db
+        ↓
+导出文档或进入卡片复习
 ```
 
-或者不用命令列：按綠色 **Code → Download ZIP**、解壓縮、雙擊 **`一鍵安裝.bat`**（或 ASCII 檔名的 `setup.bat`，兩者完全相同）。
+## 安装
 
-安裝程式會裝套件、下載並建立離線字典（約 2–3 分鐘）、在桌面放一個捷徑。
+要求：Windows 10/11、Python 3.8 或更高版本。
 
-每個批次檔都有一個 **ASCII 檔名的別名**，內容完全相同 —— 給中文檔名顯示成亂碼或不好輸入的環境用：
+1. 点击 GitHub 页面右上角绿色 **Code → Download ZIP**。
+2. 解压 ZIP；不要直接在压缩包里运行。
+3. 双击 `setup.bat`。
+4. 等待依赖和本地词典安装完成。
+5. 桌面会出现 `Oxford 划词助手` 和 `生词复习`。
 
-| 中文檔名 | ASCII 別名 | 用途 |
-|---|---|---|
-| `一鍵安裝.bat` | `setup.bat` | 安裝 |
-| `啟動.bat` | `run.bat` | 帶主控台啟動（想看訊息或除錯時用） |
-| `建立桌面捷徑.bat` | `make-shortcut.bat` | 重建桌面捷徑 |
+安装器会在项目内创建 `.venv`，不会把依赖装进全局 Python。首次构建本地词典需要下载约 65 MB 数据。
 
-> 沒裝 Python 的話請先到 [python.org](https://www.python.org/downloads/) 安裝，**務必勾選最下面的「Add Python to PATH」**，這是最常見的卡關點。
+如果提示找不到 Python，请从 [python.org](https://www.python.org/downloads/) 安装，并勾选 **Add Python to PATH**。
 
-### 出現「Windows 已保護您的電腦」的藍色警告？
+### 从 Git 克隆
 
-從網路下載的 ZIP，Windows 會替裡面每個檔案加上「來自網際網路」的標記，執行 `.bat` 時就會跳出 SmartScreen 警告。**任何從網路下載的批次檔都會這樣，不是這支程式的問題。**
-
-兩種處理方式：
-
-- **解壓縮前先解除封鎖（推薦，一次解決）**：對下載的 ZIP 按右鍵 → 內容 → 一般頁籤最下方勾選「解除封鎖」→ 確定 → 再解壓縮。
-- **執行時放行**：警告出現時點「其他資訊」→「仍要執行」。
-
-程式本身沒有數位簽章（那需要付費的程式碼簽章憑證），所以警告一定會出現。所有原始碼都在這個 repo 裡，可以自行檢視。
-
----
+```powershell
+git clone https://github.com/ziqing0816/oxford-hover-vocab.git
+cd oxford-hover-vocab
+python install.py
+```
 
 ## 使用
 
 | 操作 | 功能 |
 |---|---|
-| 按住 `Ctrl` + 滑鼠停留 0.4s | 觸發發音與查詢 |
-| `Esc` 連按兩下 | 結束 |
-| `Ctrl+Alt+H` | 暫停 / 恢復 |
-| `Ctrl+Alt+Q` | 結束 |
+| 按住 `Ctrl` 并移动鼠标到英文上，停留约 0.4 秒 | 查词 |
+| 连续按两次 `Esc` | 结束程序 |
+| `Ctrl+Alt+H` | 暂停或恢复 |
+| `Ctrl+Alt+Q` | 结束程序 |
+| 双击 `review-vocab.bat` | 打开生词复习 |
+| 双击 `export-vocab.bat` | 导出复习文档 |
 
-`Esc` 預設要連按兩下（0.6 秒內）。Esc 是日常按最兇的鍵之一，而這是全域監聽，單按一下就關會讓你一天誤關好幾次。第一次按下時浮窗會提示「再按一次 Esc 結束」。
+程序先立即显示本地释义，再在后台补充 Oxford 内容。网络较慢不会阻塞屏幕取词；较旧的网络响应也不会覆盖后来查询的单词。
 
-<table>
-<tr>
-<td><img src="docs/word-technical.png" alt="專業術語"></td>
-<td><img src="docs/word-inflected.png" alt="變化形"></td>
-</tr>
-<tr>
-<td align="center">專業術語（無詞頻星級）</td>
-<td align="center">變化形自動追到原型並補上完整字義</td>
-</tr>
-</table>
+## Oxford API（可选）
 
-浮窗由亮到暗分四層：**單字＋音標 → 主要釋義（綠）→ 其餘義項（灰）→ 分隔線 → 整句原文**，右下角是 Collins 詞頻星級（★ 越多越基礎）與考試標籤。
+没有 Oxford 凭据时，程序仍然可以作为本地简体中文划词词典使用。
 
----
+Oxford 数据必须通过官方 API 获取。本项目不抓取 Oxford 网页，也不绕过安全验证。申请 Sandbox 后，将凭据保存为当前 Windows 用户环境变量：
 
-## 運作原理
+- `OXFORD_APP_ID`
+- `OXFORD_APP_KEY`
 
-```
-按住 Ctrl 且滑鼠移動過 → 靜止 400ms
-  ↓  BitBlt 擷取游標周圍 900×90 實體像素，StretchBlt 放大 2 倍（小字才認得出來）
-  ↓  Windows.Media.Ocr 辨識，取得每個單字的 bounding rect
-  ↓  挑出矩形包住游標的那個字；落在空白處則取同行 40px 內最近的字
-  ↓  SAPI 英文語音唸單字
-  ↓  本地 dict.db 查詢（0.03ms，不連線）
-  ↓  浮窗顯示 → SAPI 繁中語音唸出第一個義項
-```
+详细步骤见 [Oxford API 配置](docs/OXFORD_SETUP.zh-CN.md)。
 
-幾個設計上的取捨：
+Sandbox 通常只有 500 次调用，并且英文只支持以 `A` 开头的测试词。程序会自动跳过其他字母，并缓存已经查询过的词，避免浪费试用额度。
 
-- **不會誤觸**：只有「Ctrl 按下**之後**滑鼠有移動過」才會武裝觸發。所以滑鼠停在文字上按 `Ctrl+S`、`Ctrl+C` 不會突然出聲 —— 這是純滑鼠停留模式最惱人的問題。
-- **浮窗點擊穿透**：套了 `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`，不吃滑鼠點擊也不搶鍵盤焦點，不會擋住你正在操作的東西。
-- **圓角與陰影交給 DWM**：用 `DwmSetWindowAttribute` 讓 Windows 11 的合成器在 GPU 上畫，程式端不自繪、不需要 Pillow、不產生點陣圖。非 Win11 會靜默退回直角。
-- **打斷舊語音**：每次觸發遞增 generation 序號，舊的還沒唸完會被 `SVSFPurgeBeforeSpeak` 清掉，不會積成一串。
-- **詞形還原**：`generates`、`ran`、`mice`、`studying` 都查得到。先查原形，再查 10 萬條詞形還原表，最後用字尾規則回推。若釋義只有「run的過去式」這種形態說明，會自動追到原型把完整字義接上。
-- **DPI 感知**：啟動時宣告 `PER_MONITOR_DPI_AWARE`，縮放非 100% 或多螢幕時游標座標才不會與螢幕像素錯開。
+## 生词保存与复习
 
-### 效能
+每次成功取词会保存到本机 `vocabulary.db`，并按规范化后的原形去重。例如 `apples`、`apple` 会归入同一条记录。
 
-| 項目 | 實測 |
+保存内容包括单词、原形、词性、音标、简体/英英释义、同义词、反义词、例句、当前原句、查询时间与次数，以及复习阶段。
+
+双击 `review-vocab.bat` 打开复习卡片：
+
+- 空格：显示答案；
+- `1`：不认识；
+- `2`：困难；
+- `3`：认识；
+- `4`：简单。
+
+双击 `export-vocab.bat` 会在 `exports` 目录生成 `vocabulary-review.md` 和 `vocabulary.csv`。CSV 使用 Excel 兼容的 UTF-8 编码，并防止原句被误认为公式。
+
+## 隐私与网络边界
+
+| 数据 | 是否离开电脑 |
 |---|---|
-| 浮窗渲染一次 | 中位數 6.7ms |
-| 字典查詢一次 | 0.03ms |
-| 閒置 12 秒的 CPU 時間 | 0ms |
-| 記憶體（私有） | 約 60 MB |
+| 光标附近截图 | 否；只交给 Windows 本地 OCR，不保存 |
+| 当前原句 | 否；可选保存到本地生词库 |
+| 查询的英文单词 | 启用 Oxford 时发送给 Oxford 官方 API |
+| App ID / App Key | 作为 HTTPS 请求头发给 Oxford；不写入项目和生词库 |
+| 生词、复习记录和导出文件 | 否；只保存在本机 |
 
-全部美化都是靜態屬性 —— 沒有動畫、沒有計時器、沒有逐格重繪。
+项目默认不录屏、不读取剪贴板、不记录键盘内容，也不设置开机启动。触发键只检查按下状态。
 
----
+`debug: true` 会把 OCR 识别到的单词和部分原句写入 `hover_translate.log`。请勿在密码、个人信息或机密文件画面上开启；排错完成后关闭并删除日志。
 
-## 繁體轉換的品質
+## 配置
 
-ECDICT 的釋義是簡體，建字典時用 OpenCC `s2twp` 轉成繁體台灣用詞。**資訊類幾乎完美**：
+首次启动会生成 `config.json`。常用字段：
 
-```
-软件→軟體  内存→記憶體  打印机→印表機  数据库→資料庫  程序→程式
-网络→網路  鼠标→滑鼠  算法→演算法  人工智能→人工智慧  视频→影片
-```
+| 字段 | 默认值 | 说明 |
+|---|---:|---|
+| `modifier` | `ctrl` | 触发键：ctrl / alt / shift / none |
+| `dwell_ms` | `400` | 鼠标停留时间 |
+| `use_oxford` | `true` | 有凭据时启用 Oxford |
+| `oxford_timeout_seconds` | `8` | Oxford 超时秒数 |
+| `auto_save_vocabulary` | `true` | 自动保存生词 |
+| `save_context_sentence` | `true` | 将原句保存到本机 |
+| `max_senses` | `4` | 最多显示的简体义项 |
+| `max_english_definitions` | `2` | 最多显示的英英释义 |
+| `max_synonyms` | `8` | 最多显示的同义词 |
+| `max_examples` | `1` | 最多显示的 Oxford 例句 |
+| `speak_english` | `true` | 朗读英文单词 |
+| `speak_chinese` | `true` | 朗读简体中文释义 |
+| `show_sentence` | `true` | 显示本地原句 |
+| `debug` | `false` | 调试日志，可能包含屏幕文字 |
 
-但 OpenCC 處理不了台灣用**不同構詞**（而非不同字）的術語，最典型的是 `线粒体` 只會變成「線粒體」，台灣其實叫「粒線體」。
+修改配置后需要重启程序。
 
-這類靠 **`用語修正.txt`** 補救 —— 純文字對照表，在執行期套用，**改完存檔重啟即生效，不需要重建字典**。目前收了 104 條（粒線體、雷射、微中子、機率、伺服器、執行緒、快取…）。
+## 数据与许可证
 
-查到不對的詞就自己加一行：
+- 项目源码采用 MIT License，并保留上游作者署名；
+- 本仓库不包含或重新发布 ECDICT、Oxford 词典内容；
+- `build_dict.py` 从锁定的 ECDICT commit 下载数据并验证 SHA-256；
+- Oxford 内容由用户使用自己的官方凭据按需查询；
+- `vocabulary.db`、`.env` 和 `exports` 已加入 `.gitignore`。
 
-```
-線粒體=粒線體
-```
+详情见 [NOTICE](NOTICE) 和 [架构说明](docs/ARCHITECTURE.zh-CN.md)。
 
-> **加規則的鐵則：這是無條件字串取代，不要加短詞或多義詞。** 加 `類=類別` 會把「人類」變成「人類別」。專案刻意排除了「函數」（數學用函數、程式用函式，台灣兩者都對）、「數據」（大數據是台灣正式用語）、「文件」（也指 document）。
+## 开发与测试
 
-歡迎送 PR 補充這張表。
-
----
-
-## 設定
-
-`config.json` 在首次執行時產生。改完存檔，重啟程式生效。
-
-| 欄位 | 預設 | 說明 |
-|---|---|---|
-| `modifier` | `"ctrl"` | 觸發要按住的鍵：`ctrl` / `alt` / `shift` / `none`（`none` = 純停留，會很吵） |
-| `dwell_ms` | `400` | 滑鼠要靜止多久才觸發 |
-| `capture_width` / `capture_height` | `900` / `90` | 擷取範圍（實體像素，以游標為中心） |
-| `ocr_scale` | `2` | OCR 前放大倍率。字很小認不出來時調 3 |
-| `ocr_language` | `"auto"` | `auto` / `en-US` / `zh-Hant-TW` |
-| `speak_english` / `speak_chinese` | `true` | 是否唸英文單字 / 繁中釋義 |
-| `speak_sentence_english` | `false` | 連整句英文一起唸（練聽力再開） |
-| `english_voice` / `chinese_voice` | `Zira` / `Hanhan` | SAPI 語音名稱**關鍵字**，比對系統已安裝的語音 |
-| `english_rate` / `chinese_rate` | `0` | 語速 `-10` ~ `10` |
-| `opacity` | `0.9` | 浮窗不透明度。低於 `0.6` 底下文字會透上來 |
-| `show_sentence` | `true` | 顯示整句原文（純上下文，不翻譯也不外傳） |
-| `show_phonetic` / `show_stars` | `true` | 顯示音標 / Collins 詞頻星級 |
-| `exam_tags` | `["toefl","ielts","gre"]` | 只顯示清單內的考試標籤。ECDICT 另有中國的 `zk`/`gk`/`ky`/`cet4`/`cet6`，預設不顯示。設 `[]` 整排關閉 |
-| `max_senses` | `4` | 最多顯示幾個義項 |
-| `esc_quit` | `"double"` | `double` 連按兩下 / `single` 按一下 / `off` 停用 |
-| `hide_after_ms` | `6000` | 浮窗幾毫秒後自動消失 |
-| `debug` | `false` | 主控台印出 OCR 全文與各段耗時 |
-
----
-
-## 自測
-
-```bash
-python selftest.py
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_oxford_provider.py test_provider_chain.py test_vocabulary_store.py test_vocab_cli.py test_review_app.py
+.\.venv\Scripts\python.exe selftest.py
 ```
 
-62 項檢查，把已知英文畫到螢幕上再走一次完整管線讀回來 —— 驗證螢幕擷取、OCR、游標挑字、字典查詢、繁體修正、詞形還原、**零連線**、語音、浮窗、Esc 判定、單一實例鎖。
+`selftest.py` 会实际验证屏幕捕获、Windows OCR、语音、弹窗、简体释义、快捷键和单一实例。Oxford 单元测试使用模拟响应，不消耗 API 调用次数。
 
-只想重驗字典品質（20 個代表性單字）：
+## 项目状态
 
-```bash
-python build_dict.py --verify
-```
-
----
-
-## 參考環境
-
-**每台機器不同，請以 `selftest.py` 印出的實際值為準。** 開發機上的情況：
-
-- Windows OCR 可用語言只有 `ja` 與 `zh-Hant-TW`，**沒有英文語言包** —— 但 zh-Hant-TW 引擎辨識英文完全正確（實測整句一字不差），所以不必特地去裝。附帶好處是中日文也讀得到。
-  - 要裝英文 OCR：設定 → 時間與語言 → 語言與地區 → English → 語言選項 → 選用功能加「光學字元辨識」，然後把 `ocr_language` 設成 `"en-US"`。
-- SAPI 語音：`Microsoft Zira Desktop`(en-US)、`Microsoft Hanhan Desktop`(zh-TW)、`Microsoft Haruka Desktop`(ja-JP)，全部離線。**你的機器語音名稱可能不同**，`english_voice` / `chinese_voice` 是關鍵字比對，用自測印出的清單去對。
-- 字典：768,739 詞、詞形還原 103,102 條、`dict.db` 79 MB。
-
----
-
-## 已知限制
-
-- **沒有上下文判斷**：字典會列出所有義項，不會像線上翻譯那樣依上下文挑一個。`thread` 給你「線、絲、纖維」而不是「執行緒」。這是換取零連線的代價。
-- **OCR 吃畫面品質**：深色底、極小字、襯線字體、字被圖案壓住時準確度會掉。調高 `ocr_scale` 通常有救。
-- **只處理英文單字**：純數字與符號會被過濾。連字號與撇號（`well-known`、`don't`）算同一個字。
-- **新詞與專有名詞**：ECDICT 收錄到 2020 年前後，太新的術語或人名地名可能查不到。
-- **全螢幕獨佔模式的遊戲**擷取不到畫面，切成視窗化或無邊框視窗即可。
-- 僅支援 Windows。OCR、語音、螢幕擷取、圓角全都用 Windows 專屬 API。
-
----
-
-## 分享給別人時
-
-轉傳這個工具時，建議連同下面這段一起附上 —— 授權、限制、風險一次講清楚，收到的人才能自己判斷：
-
-```
-這是我做的開源小工具，MIT 授權，原始碼公開：
-https://github.com/AFA7777/hover-translate
-
-字典資料來自 ECDICT（MIT，著作權歸原作者）；本程式不夾帶字典，
-安裝時由使用者自行下載並驗證 SHA-256。
-
-主程式執行時完全離線（可用防火牆驗證）。它的運作方式是讀取螢幕畫面
-做文字辨識，所以請勿在顯示帳號密碼、個資或機密文件的畫面上使用，
-也不要開啟 debug 模式。
-
-專案很新，尚未經過第三方資安稽核，建議先自行試用評估。
-```
-
-如果轉傳的人不是作者本人，把第一句改成「這是一個第三方 MIT 開源專案」即可。
-
-**請不要宣稱這個工具「完全安全」。** 它會讀取螢幕內容 —— 那是功能本身，不是缺陷。正確的說法是描述可驗證的事實（執行期無網路連線、原始碼公開、有自動化測試在守），並讓使用者自行評估是否符合自己的情境。
-
----
-
-## 授權
-
-MIT，見 [LICENSE](LICENSE)。第三方元件聲明見 [NOTICE](NOTICE)。
-
-本程式**不夾帶任何字典資料** —— `build_dict.py` 在使用者自己的機器上從官方 repo 下載並建置。
-
-- 字典資料：[ECDICT](https://github.com/skywind3000/ECDICT)（MIT）
-- 簡繁轉換：[OpenCC](https://github.com/BYVoid/OpenCC)（Apache 2.0），僅建字典時使用
-
-**關於字典資料的來源。** ECDICT 由其作者以 MIT 授權釋出，本專案據此使用。但 ECDICT 本身是多年累積的彙編成果 —— 依其 README 所述，詞庫來自網友貢獻、開源的 cdict 字典、開源《屌絲字典》的英漢部分，並以 BNC／COCA 語料庫詞頻校對。
-
-**本專案與作者無法逐筆驗證那 76 萬條詞條的來源，也不作此宣稱。** 能確定的只有：ECDICT 由其作者以 MIT 釋出；本 repo 不含任何字典資料，由 `build_dict.py` 在使用者機器上從鎖定的上游 commit 下載並驗證 SHA-256。若你要用在商業或機構場合而在意資料來源，請直接評估[上游專案](https://github.com/skywind3000/ECDICT)，不要只依賴這裡的說明。詳見 [NOTICE](NOTICE)。
+目前处于首个公开版本发布前的开发阶段。建议在正式使用前查看分支与 Release 说明。

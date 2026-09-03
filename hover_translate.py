@@ -132,7 +132,7 @@ def load_config():
                 if saved.get("chinese_voice") == "Hanhan":
                     cfg["chinese_voice"] = "Huihui"
         except Exception as e:
-            print(f"[warn] config.json 讀取失敗，使用預設值：{e}")
+            print(f"[警告] config.json 读取失败，使用默认值：{e}")
     else:
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -437,7 +437,7 @@ class LocalDict:
                     if src and dst and src != dst:
                         fixes.append((src, dst))
         except Exception as e:
-            print(f"[warn] 用語修正表讀取失敗：{e}")
+            print(f"[警告] 术语修正表读取失败：{e}")
         # 長詞先換，避免短詞先替換破壞長詞（脫氧核糖核酸 vs 脫氧核糖）
         fixes.sort(key=lambda p: -len(p[0]))
         return fixes
@@ -900,7 +900,7 @@ class App:
 
         print("初始化 OCR…", flush=True)
         self.ocr = Ocr(self.cfg["ocr_language"])
-        print(f"  OCR 引擎語言：{self.ocr.lang}   可用：{self.ocr.available}", flush=True)
+        print(f"  OCR 引擎语言：{self.ocr.lang}   可用：{self.ocr.available}", flush=True)
 
         self.local_dict = LocalDict(DICT_PATH, FIX_PATH)
         self.dict = self.local_dict
@@ -925,15 +925,15 @@ class App:
         self.speaker = Speaker(self.cfg)
         self.speaker.ready.wait(timeout=8)
         if getattr(self.speaker, "voice_names", None):
-            print(f"  語音：{self.speaker.voice_names}", flush=True)
+            print(f"  语音：{self.speaker.voice_names}", flush=True)
 
         mod = self.cfg["modifier"]
-        trig = "滑鼠停留" if mod == "none" else f"按住 {mod.upper()} + 滑鼠停留"
-        esc_hint = {"double": "Esc 連按兩下 結束      ",
-                    "single": "Esc 結束      ", "off": ""}.get(
+        trig = "鼠标停留" if mod == "none" else f"按住 {mod.upper()} + 鼠标停留"
+        esc_hint = {"double": "连续按两次 Esc 结束      ",
+                    "single": "Esc 结束      ", "off": ""}.get(
                         str(self.cfg["esc_quit"]).lower(), "")
-        print(f"\n  已啟動：{trig} {self.cfg['dwell_ms']}ms 觸發")
-        print(f"  {esc_hint}Ctrl+Alt+H 暫停/恢復      Ctrl+Alt+Q 結束\n", flush=True)
+        print(f"\n  已启动：{trig} {self.cfg['dwell_ms']}ms 触发")
+        print(f"  {esc_hint}Ctrl+Alt+H 暂停/恢复      Ctrl+Alt+Q 结束\n", flush=True)
 
         threading.Thread(target=self.watch, daemon=True).start()
         self.root.after(30, self.pump)
@@ -965,10 +965,10 @@ class App:
         root.destroy()，視窗連同浮窗會立刻消失，只留下一閃。
         """
         ms = max(0, int(self.cfg["quit_toast_ms"]))
-        print(f"結束{f'（{why}）' if why else ''}。", flush=True)
+        print(f"结束{f'（{why}）' if why else ''}。", flush=True)
         if ms:
             p = cursor_pos()
-            self.post(self.overlay.toast, p[0], p[1], "即時翻譯停止",
+            self.post(self.overlay.toast, p[0], p[1], "划词助手已停止",
                       ms, self.overlay.FG_STOP)
             time.sleep(ms / 1000.0)
         self.running = False
@@ -1000,7 +1000,7 @@ class App:
                     return
                 esc_last = now
                 p = cursor_pos()
-                self.post(self.overlay.toast, p[0], p[1], "再按一次 Esc 結束")
+                self.post(self.overlay.toast, p[0], p[1], "再按一次 Esc 结束")
             esc_prev = esc_now
 
             # 熱鍵：Ctrl+Alt+H / Ctrl+Alt+Q
@@ -1010,7 +1010,7 @@ class App:
                     return
                 if key_down(VK_H):
                     self.enabled = not self.enabled
-                    print(f"{'恢復' if self.enabled else '暫停'}。", flush=True)
+                    print(f"{'恢复' if self.enabled else '暂停'}。", flush=True)
                     if not self.enabled:
                         self.post(self.overlay.hide)
                     hotkey_cooldown = now + 0.6
@@ -1118,22 +1118,22 @@ class App:
 
 def main():
     if not acquire_single_instance():
-        print("已經有一份在執行中，這次啟動略過。", flush=True)
-        msgbox("即時翻譯已經在執行中。\n\n"
-               "按住 Ctrl 停在英文字上即可使用；\n"
-               "連按兩下 Esc 可以停止它。")
+        print("已经有一份程序在运行，本次启动已跳过。", flush=True)
+        msgbox("Oxford 划词助手已经在运行。\n\n"
+               "按住 Ctrl 停在英文单词上即可使用；\n"
+               "连续按两次 Esc 可以停止它。")
         return
     try:
         App().run()
     except Exception:
         traceback.print_exc()
-        hint = ("啟動失敗。\n\n"
-                "缺套件： python -m pip install winsdk pywin32\n"
-                "缺字典： python build_dict.py")
+        hint = ("启动失败。\n\n"
+                "缺少依赖：请重新运行 setup.bat\n"
+                "缺少字典：请运行 .venv\\Scripts\\python.exe build_dict.py")
         print("\n" + hint, flush=True)
         if WINDOWLESS:
             # 沒有主控台，只能靠對話框告知，否則使用者只會覺得「點了沒反應」
-            msgbox(f"{hint}\n\n詳細錯誤請看 hover_translate.log", icon=0x10)
+            msgbox(f"{hint}\n\n详细错误请查看 hover_translate.log", icon=0x10)
         else:
             try:
                 input("按 Enter 關閉…")

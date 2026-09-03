@@ -243,17 +243,17 @@ ov.show(500, 400, None, SENTENCE, miss_word="zzzqqx")
 r2.update()
 check("查无此字仍能显示", "查无" in ov.l_trans.cget("text"), ov.l_trans.cget("text"))
 time.sleep(0.6)
-ov.toast(500, 400, "再按一次 Esc 結束")
+ov.toast(500, 400, "再按一次 Esc 结束")
 r2.update()
-check("toast 單行提示可顯示", ov.l_word.cget("text") == "再按一次 Esc 結束"
+check("toast 单行提示可显示", ov.l_word.cget("text") == "再按一次 Esc 结束"
       and bool(ov.win.winfo_viewable()))
 check("toast 切成简体中文字体", "YaHei" in str(ov.l_word.cget("font")),
       str(ov.l_word.cget("font")))
 time.sleep(0.6)
 
-ov.toast(500, 400, "即時翻譯停止", 1500, ov.FG_STOP)
+ov.toast(500, 400, "划词助手已停止", 1500, ov.FG_STOP)
 r2.update()
-check("停止浮窗文字正確", ov.l_word.cget("text") == "即時翻譯停止")
+check("停止浮窗文字正确", ov.l_word.cget("text") == "划词助手已停止")
 check("停止浮窗用警示色", str(ov.l_word.cget("fg")).lower() == ov.FG_STOP.lower(),
       ov.l_word.cget("fg"))
 check("toast 收起所有查詢用的列",

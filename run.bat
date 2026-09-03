@@ -5,7 +5,8 @@ REM Keep this file pure ASCII -- see setup.bat for why.
 cd /d "%~dp0"
 title hover_translate
 if not exist dict.db goto nodict
-python hover_translate.py
+if not exist ".venv\Scripts\python.exe" goto noenv
+".venv\Scripts\python.exe" hover_translate.py
 if errorlevel 1 pause
 exit /b %errorlevel%
 
@@ -13,6 +14,13 @@ exit /b %errorlevel%
 echo.
 echo   Dictionary dict.db not found. Building it now...
 echo.
-python build_dict.py
+if not exist ".venv\Scripts\python.exe" goto noenv
+".venv\Scripts\python.exe" build_dict.py
 if errorlevel 1 pause
 exit /b %errorlevel%
+
+:noenv
+echo.
+echo   Python environment not found. Please run setup.bat first.
+pause
+exit /b 1
