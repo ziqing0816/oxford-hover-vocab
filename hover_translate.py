@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-hover_translate — 滑鼠指到螢幕上的英文，唸出英文發音，再用繁體中文說出翻譯。
+hover_translate — 鼠标指向屏幕上的英文，朗读英文发音，并显示简体中文释义。
 
 運作流程：
   按住 Ctrl，滑鼠停在英文字上約 400ms
     → BitBlt 擷取游標周圍畫面（含 2x 放大，小字才認得出來）
     → Windows 內建 OCR 取出單字與其座標，挑出游標正下方那個字
     → SAPI 英文語音唸單字（Zira）
-    → 查本機 dict.db（ECDICT 建成的繁體離線字典），套用用語修正.txt
-    → 浮窗顯示（單字/音標/義項/整句），SAPI 繁中語音唸出釋義（Hanhan）
+    → 立即查询本地 ECDICT 并显示简体释义
+    → 可选后台查询 Oxford 官方 API，补充英英释义、同义词与例句
+    → Oxford 不可用时保持本地结果，SAPI 简中语音朗读释义（Huihui）
 
 熱鍵：Esc 連按兩下 結束   Ctrl+Alt+H 暫停/恢復   Ctrl+Alt+Q 結束
 
-這支程式執行期不連線，也刻意不 import 任何網路模組。唯一會連網的是
-build_dict.py（只在建字典時跑一次）。若要改動本檔，請維持這個性質 ——
-selftest.py 有兩道測試在守。
+Oxford 连接是可选功能，只发送规范化后的单词；截图和原句不会外传。没有凭据、
+断网或接口失败时自动保留本地查询结果。
 """
 
 import asyncio
@@ -31,8 +31,12 @@ import time
 import traceback
 from ctypes import wintypes
 
-# 這支程式刻意不 import 任何網路模組（urllib / socket / requests）。
-# 字典是本地的，執行期零連線 —— 拿防火牆擋死它也照常運作。
+from dictionary_models import WordEntry
+from oxford_provider import OxfordCredentialsMissing, OxfordDictionaryProvider
+from provider_chain import FallbackDictionaryProvider
+from vocabulary_store import VocabularyStore
+
+# 网络实现隔离在 oxford_provider.py；本文件不直接处理 HTTP 或认证凭据。
 
 # 用 pythonw.exe 啟動（桌面捷徑）時沒有主控台，sys.stdout 是 None，所有訊息會
 # 石沉大海。這時改寫進 hover_translate.log，否則出事完全無從查起。
@@ -67,6 +71,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DICT_PATH = os.path.join(BASE_DIR, "dict.db")
 FIX_PATH = os.path.join(BASE_DIR, "用語修正.txt")
+VOCAB_PATH = os.path.join(BASE_DIR, "vocabulary.db")
 
 DEFAULT_CONFIG = {
     "modifier": "ctrl",           # ctrl / alt / shift / none（none = 純停留，會很吵）
@@ -74,12 +79,12 @@ DEFAULT_CONFIG = {
     "capture_width": 900,         # 擷取範圍（實體像素，以游標為中心）
     "capture_height": 90,
     "ocr_scale": 2,               # OCR 前放大倍率，小字建議 2
-    "ocr_language": "auto",       # auto / en-US / zh-Hant-TW
+    "ocr_language": "auto",       # auto / en-US / en-GB / zh-Hans-CN
     "speak_english": True,
     "speak_chinese": True,
     "speak_sentence_english": False,   # 連整句英文一起唸（練聽力再開）
     "english_voice": "Zira",
-    "chinese_voice": "Hanhan",
+    "chinese_voice": "Huihui",
     "english_rate": 0,            # -10 ~ 10
     "chinese_rate": 0,
     # Esc 結束程式。Esc 是日常最常按的鍵之一，而這是全域監聽，所以預設要連按
@@ -98,11 +103,19 @@ DEFAULT_CONFIG = {
     # ECDICT 沒有多益(TOEIC)資料，所以這裡放不進「多益」。
     "exam_tags": ["toefl", "ielts", "gre"],
     "max_senses": 4,              # 最多顯示幾個義項
+    "use_oxford": True,           # 有环境变量凭据时启用 Oxford；失败自动回退本地
+    "oxford_timeout_seconds": 8,
+    "max_english_definitions": 2,
+    "max_synonyms": 8,
+    "max_examples": 1,
+    "auto_save_vocabulary": True,
+    "save_context_sentence": True,  # 原句只保存在本机，不发送给 Oxford
     "hide_after_ms": 6000,
     "font_size_word": 20,
     "font_size_trans": 17,
     "font_size_note": 11,
     "min_word_len": 2,
+    "use_term_fixes": False,       # True 时启用上游台湾繁体术语修正表
     "debug": False,
 }
 
@@ -112,9 +125,14 @@ def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg.update(json.load(f))
+                saved = json.load(f)
+                cfg.update(saved)
+                # 从上游繁体版升级时，自动切换到本机常见的简中语音。
+                # 用户明确改成其他语音名称时保持其选择。
+                if saved.get("chinese_voice") == "Hanhan":
+                    cfg["chinese_voice"] = "Huihui"
         except Exception as e:
-            print(f"[warn] config.json 讀取失敗，使用預設值：{e}")
+            print(f"[警告] config.json 读取失败，使用默认值：{e}")
     else:
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -303,7 +321,7 @@ class Ocr:
 
         avail = [l.language_tag for l in OcrEngine.available_recognizer_languages]
         order = ([lang_pref] if lang_pref != "auto" else []) + \
-                ["en-US", "en-GB", "zh-Hant-TW", "zh-Hant", "zh-Hans-CN"]
+                ["en-US", "en-GB", "zh-Hans-CN", "zh-Hans", "zh-Hant-TW", "zh-Hant"]
         self.engine, self.lang = None, None
         for tag in order:
             if any(a.lower().startswith(tag.lower().split("-")[0]) or a.lower() == tag.lower()
@@ -374,8 +392,9 @@ def pick_word(result, px, py, min_len):
 POS_PREFIX = re.compile(r"^\s*(?:\[[^\]]{1,12}\]|[a-z]{1,5}\.)\s*", re.I)
 # 「run的過去式」這種釋義只說明形態、沒給字義，要再追查原型把真正的意思補上。
 INFLECTION_ONLY = re.compile(
-    r"的(?:過去式|過去分詞|現在分詞|第三人稱單數|複數形?|比較級|最高級"
-    r"|ing形式|ed形式|名詞複數)")
+    r"的(?:過去式|过去式|過去分詞|过去分词|現在分詞|现在分词|"
+    r"第三人稱單數|第三人称单数|複數形?|复数形?|比較級|比较级|"
+    r"最高級|最高级|ing形式|ed形式|名詞複數|名词复数)")
 # 詞形還原的保底規則：lemma 表沒收錄時，照英文構詞規律回推原型。
 SUFFIX_RULES = [
     ("ies", "y"), ("ied", "y"), ("ier", "y"), ("iest", "y"),
@@ -387,15 +406,19 @@ SUFFIX_RULES = [
 
 
 class LocalDict:
-    """ECDICT 建成的本地繁體字典。純檔案查詢，永遠不連網。"""
+    """ECDICT 建成的本地字典。纯文件查询，运行时不联网。"""
 
-    def __init__(self, db_path=DICT_PATH, fix_path=FIX_PATH):
+    name = "local-ecdict"
+
+    def __init__(self, db_path=DICT_PATH, fix_path=FIX_PATH, use_fixes=None):
         if not os.path.exists(db_path):
             raise FileNotFoundError(
                 f"找不到字典 {db_path}\n請先執行： python build_dict.py")
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.lock = threading.Lock()
-        self.fixes = self._load_fixes(fix_path)
+        if use_fixes is None:
+            use_fixes = bool(CFG.get("use_term_fixes", False))
+        self.fixes = self._load_fixes(fix_path) if use_fixes else []
 
     @staticmethod
     def _load_fixes(path):
@@ -414,7 +437,7 @@ class LocalDict:
                     if src and dst and src != dst:
                         fixes.append((src, dst))
         except Exception as e:
-            print(f"[warn] 用語修正表讀取失敗：{e}")
+            print(f"[警告] 术语修正表读取失败：{e}")
         # 長詞先換，避免短詞先替換破壞長詞（脫氧核糖核酸 vs 脫氧核糖）
         fixes.sort(key=lambda p: -len(p[0]))
         return fixes
@@ -517,12 +540,20 @@ class LocalDict:
 
         trans = "\n".join(senses)   # trans 一律由 senses 產生，兩者不能各說各話
 
-        return {
-            "word": word, "disp": disp or word, "phonetic": phonetic or "",
-            "trans": trans, "senses": senses, "pos": pos or "",
-            "collins": collins or 0, "frq": frq or 0, "tag": tag or "",
-            "via": via if via and via != key else None,
-        }
+        lemma = via if via and via != key else key
+        return WordEntry(
+            word=word,
+            display=disp or word,
+            lemma=lemma,
+            part_of_speech=pos or "",
+            phonetic=phonetic or "",
+            meanings_zh_cn=tuple(senses),
+            provider=self.name,
+            collins=collins or 0,
+            frequency=frq or 0,
+            tags=tuple((tag or "").split()),
+            via=via if via and via != key else None,
+        )
 
     @staticmethod
     def speakable(sense):
@@ -648,7 +679,7 @@ class Overlay:
         self.body = tk.Frame(self.win, bg=self.BG)
         self.body.pack(fill="both", expand=True)
 
-        zh = "Microsoft JhengHei UI"
+        zh = "Microsoft YaHei UI"
         n = cfg["font_size_note"]
         # 標題行平常是英文單字，用 Segoe UI；但 toast 是中文，要換成中文字體，
         # 否則會走字體 fallback，字重與行高都跑掉。
@@ -674,6 +705,16 @@ class Overlay:
         self.l_alts = tk.Label(self.body, bg=self.BG, fg=self.FG_SENSE, justify="left",
                                anchor="w", wraplength=self.WRAP, font=(zh, n + 2))
         self.l_alts.pack(fill="x", padx=PAD, pady=(6, 0))
+
+        self.l_definition = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_WORD, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI", n + 1))
+        self.l_synonyms = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_SENSE, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI", n))
+        self.l_example = tk.Label(
+            self.body, bg=self.BG, fg=self.FG_NOTE, justify="left",
+            anchor="w", wraplength=self.WRAP, font=("Segoe UI Italic", n))
 
         self.sep = tk.Frame(self.body, bg=self.DIVIDER, height=1)
         self.l_sent = tk.Label(self.body, bg=self.BG, fg=self.FG_NOTE, justify="left",
@@ -728,22 +769,29 @@ class Overlay:
             pass
 
     def show(self, x, y, entry, sentence, miss_word=None):
-        """entry 為 LocalDict.lookup 的結果；查不到時傳 None 並給 miss_word。"""
+        """entry 为 DictionaryProvider.lookup 的结果；查不到时传 None。"""
         if entry:
-            word = entry["disp"]
-            phon = (f"[{entry['phonetic']}]"
-                    if self.cfg["show_phonetic"] and entry["phonetic"] else "")
-            if entry.get("via"):
-                phon += f"{'  ' if phon else ''}← {entry['via']}"   # 詞形還原的原型
-            senses = entry["senses"][:max(1, self.cfg["max_senses"])]
+            word = entry.display
+            phon = (f"[{entry.phonetic}]"
+                    if self.cfg["show_phonetic"] and entry.phonetic else "")
+            if entry.via:
+                phon += f"{'  ' if phon else ''}← {entry.via}"   # 詞形還原的原型
+            senses = entry.meanings_zh_cn[:max(1, self.cfg["max_senses"])]
             main = senses[0] if senses else ""
             rest = "\n".join(senses[1:])
-            stars = "★" * entry["collins"] if self.cfg["show_stars"] else ""
-            exams = " · ".join(self.EXAM_LABEL.get(t, t) for t in entry["tag"].split()
+            definitions = entry.definitions_en[:max(
+                0, int(self.cfg["max_english_definitions"]))]
+            definition = "\n".join(f"• {text}" for text in definitions)
+            syns = entry.synonyms[:max(0, int(self.cfg["max_synonyms"]))]
+            synonyms = f"Synonyms: {', '.join(syns)}" if syns else ""
+            example_items = entry.examples[:max(0, int(self.cfg["max_examples"]))]
+            example = f"Example: {example_items[0]}" if example_items else ""
+            stars = "★" * entry.collins if self.cfg["show_stars"] else ""
+            exams = " · ".join(self.EXAM_LABEL.get(t, t) for t in entry.tags
                                if t in self.cfg["exam_tags"])
         else:
-            word, phon, main, rest, stars, exams = \
-                (miss_word or ""), "", "（字典查無此字）", "", "", ""
+            word, phon, main, rest, definition, synonyms, example, stars, exams = \
+                (miss_word or ""), "", "（字典查无此字）", "", "", "", "", "", ""
 
         self.l_word.config(text=word, font=self.font_word_en, fg=self.FG_WORD)
         self.l_phon.config(text=phon)
@@ -751,6 +799,15 @@ class Overlay:
         self.l_alts.config(text=rest)
         self.l_alts.pack_forget() if not rest else self.l_alts.pack(
             fill="x", padx=self.PAD, pady=(6, 0), after=self.l_trans)
+
+        for label, text in ((self.l_definition, definition),
+                            (self.l_synonyms, synonyms),
+                            (self.l_example, example)):
+            label.config(text=text)
+            if text:
+                label.pack(fill="x", padx=self.PAD, pady=(6, 0))
+            else:
+                label.pack_forget()
 
         # 整句只作為上下文顯示，不翻譯、不外傳。有內容才畫分隔線。
         s = sentence if (self.cfg["show_sentence"] and sentence) else ""
@@ -781,6 +838,9 @@ class Overlay:
         self.l_phon.config(text="")
         self.l_trans.config(text="")
         self.l_alts.pack_forget()
+        self.l_definition.pack_forget()
+        self.l_synonyms.pack_forget()
+        self.l_example.pack_forget()
         self.sep.pack_forget()
         self.l_sent.pack_forget()
         self.foot.pack_forget()
@@ -840,24 +900,40 @@ class App:
 
         print("初始化 OCR…", flush=True)
         self.ocr = Ocr(self.cfg["ocr_language"])
-        print(f"  OCR 引擎語言：{self.ocr.lang}   可用：{self.ocr.available}", flush=True)
+        print(f"  OCR 引擎语言：{self.ocr.lang}   可用：{self.ocr.available}", flush=True)
 
-        self.dict = LocalDict(DICT_PATH, FIX_PATH)
-        print(f"  離線字典：{self.dict.count():,} 詞"
-              f"，台灣用語修正 {len(self.dict.fixes)} 條", flush=True)
+        self.local_dict = LocalDict(DICT_PATH, FIX_PATH)
+        self.dict = self.local_dict
+        self.enriched_dict = None
+        print(f"  离线字典：{self.local_dict.count():,} 词"
+              f"，术语修正 {len(self.local_dict.fixes)} 条", flush=True)
+        if self.cfg["use_oxford"]:
+            try:
+                oxford = OxfordDictionaryProvider.from_env(
+                    timeout=float(self.cfg["oxford_timeout_seconds"]))
+                self.enriched_dict = FallbackDictionaryProvider(
+                    oxford, self.local_dict)
+                print("  Oxford：已启用（失败时自动使用离线词典）", flush=True)
+            except OxfordCredentialsMissing:
+                print("  Oxford：未配置凭据，当前使用离线词典", flush=True)
+
+        self.vocab = (VocabularyStore(VOCAB_PATH)
+                      if self.cfg["auto_save_vocabulary"] else None)
+        if self.vocab:
+            print(f"  生词库：{self.vocab.count():,} 个词（仅保存在本机）", flush=True)
 
         self.speaker = Speaker(self.cfg)
         self.speaker.ready.wait(timeout=8)
         if getattr(self.speaker, "voice_names", None):
-            print(f"  語音：{self.speaker.voice_names}", flush=True)
+            print(f"  语音：{self.speaker.voice_names}", flush=True)
 
         mod = self.cfg["modifier"]
-        trig = "滑鼠停留" if mod == "none" else f"按住 {mod.upper()} + 滑鼠停留"
-        esc_hint = {"double": "Esc 連按兩下 結束      ",
-                    "single": "Esc 結束      ", "off": ""}.get(
+        trig = "鼠标停留" if mod == "none" else f"按住 {mod.upper()} + 鼠标停留"
+        esc_hint = {"double": "连续按两次 Esc 结束      ",
+                    "single": "Esc 结束      ", "off": ""}.get(
                         str(self.cfg["esc_quit"]).lower(), "")
-        print(f"\n  已啟動：{trig} {self.cfg['dwell_ms']}ms 觸發")
-        print(f"  {esc_hint}Ctrl+Alt+H 暫停/恢復      Ctrl+Alt+Q 結束\n", flush=True)
+        print(f"\n  已启动：{trig} {self.cfg['dwell_ms']}ms 触发")
+        print(f"  {esc_hint}Ctrl+Alt+H 暂停/恢复      Ctrl+Alt+Q 结束\n", flush=True)
 
         threading.Thread(target=self.watch, daemon=True).start()
         self.root.after(30, self.pump)
@@ -889,10 +965,10 @@ class App:
         root.destroy()，視窗連同浮窗會立刻消失，只留下一閃。
         """
         ms = max(0, int(self.cfg["quit_toast_ms"]))
-        print(f"結束{f'（{why}）' if why else ''}。", flush=True)
+        print(f"结束{f'（{why}）' if why else ''}。", flush=True)
         if ms:
             p = cursor_pos()
-            self.post(self.overlay.toast, p[0], p[1], "即時翻譯停止",
+            self.post(self.overlay.toast, p[0], p[1], "划词助手已停止",
                       ms, self.overlay.FG_STOP)
             time.sleep(ms / 1000.0)
         self.running = False
@@ -924,7 +1000,7 @@ class App:
                     return
                 esc_last = now
                 p = cursor_pos()
-                self.post(self.overlay.toast, p[0], p[1], "再按一次 Esc 結束")
+                self.post(self.overlay.toast, p[0], p[1], "再按一次 Esc 结束")
             esc_prev = esc_now
 
             # 熱鍵：Ctrl+Alt+H / Ctrl+Alt+Q
@@ -934,7 +1010,7 @@ class App:
                     return
                 if key_down(VK_H):
                     self.enabled = not self.enabled
-                    print(f"{'恢復' if self.enabled else '暫停'}。", flush=True)
+                    print(f"{'恢复' if self.enabled else '暂停'}。", flush=True)
                     if not self.enabled:
                         self.post(self.overlay.hide)
                     hotkey_cooldown = now + 0.6
@@ -985,7 +1061,11 @@ class App:
             return
 
         gen = self.speaker.new_generation()
-        entry = self.dict.lookup(word)          # 本地查詢，0ms，不連線
+        entry = self.local_dict.lookup(word)    # 先立即显示本地结果，不等待网络
+        context = sentence if self.cfg["save_context_sentence"] else ""
+        saved_locally = bool(entry and self.vocab)
+        if saved_locally:
+            self.vocab.record_lookup(entry, context)
 
         if self.cfg["speak_english"]:
             self.speaker.say(gen, self.cfg["english_voice"], word, self.cfg["english_rate"])
@@ -995,11 +1075,35 @@ class App:
 
         self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
 
-        if entry and self.cfg["speak_chinese"] and entry["senses"]:
-            zh = self.dict.speakable(entry["senses"][0])
+        if self.enriched_dict:
+            threading.Thread(
+                target=self._enrich_online,
+                args=(gen, pos, word, sentence, saved_locally), daemon=True).start()
+
+        if entry and self.cfg["speak_chinese"] and entry.meanings_zh_cn:
+            zh = self.local_dict.speakable(entry.meanings_zh_cn[0])
             if zh:
                 self.speaker.say(gen, self.cfg["chinese_voice"], zh, self.cfg["chinese_rate"])
         log(f"total {int((time.time()-t0)*1000)}ms")
+
+    def _enrich_online(self, generation, pos, word, sentence, saved_locally):
+        """后台补充 Oxford 内容；旧查询完成时不覆盖较新的浮窗。"""
+        entry = self.enriched_dict.lookup(word)
+        if self.enriched_dict.last_error:
+            log("Oxford fallback", type(self.enriched_dict.last_error).__name__)
+            return
+        if entry and self.vocab:
+            if saved_locally:
+                self.vocab.enrich(entry)
+            else:
+                context = sentence if self.cfg["save_context_sentence"] else ""
+                self.vocab.record_lookup(entry, context)
+        with self.speaker.gen_lock:
+            still_current = generation == self.speaker.gen
+        if not still_current:
+            return
+        if entry and (entry.definitions_en or entry.synonyms or entry.examples):
+            self.post(self.overlay.show, pos[0], pos[1], entry, sentence, word)
 
     def run(self):
         try:
@@ -1008,26 +1112,28 @@ class App:
             pass
         finally:
             self.running = False
+            if self.vocab:
+                self.vocab.close()
 
 
 def main():
     if not acquire_single_instance():
-        print("已經有一份在執行中，這次啟動略過。", flush=True)
-        msgbox("即時翻譯已經在執行中。\n\n"
-               "按住 Ctrl 停在英文字上即可使用；\n"
-               "連按兩下 Esc 可以停止它。")
+        print("已经有一份程序在运行，本次启动已跳过。", flush=True)
+        msgbox("Oxford 划词助手已经在运行。\n\n"
+               "按住 Ctrl 停在英文单词上即可使用；\n"
+               "连续按两次 Esc 可以停止它。")
         return
     try:
         App().run()
     except Exception:
         traceback.print_exc()
-        hint = ("啟動失敗。\n\n"
-                "缺套件： python -m pip install winsdk pywin32\n"
-                "缺字典： python build_dict.py")
+        hint = ("启动失败。\n\n"
+                "缺少依赖：请重新运行 setup.bat\n"
+                "缺少字典：请运行 .venv\\Scripts\\python.exe build_dict.py")
         print("\n" + hint, flush=True)
         if WINDOWLESS:
             # 沒有主控台，只能靠對話框告知，否則使用者只會覺得「點了沒反應」
-            msgbox(f"{hint}\n\n詳細錯誤請看 hover_translate.log", icon=0x10)
+            msgbox(f"{hint}\n\n详细错误请查看 hover_translate.log", icon=0x10)
         else:
             try:
                 input("按 Enter 關閉…")

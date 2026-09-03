@@ -11,6 +11,13 @@ lemma.en.txt
 
 # 首次執行自動產生，使用者各自調整
 config.json
+.env
+.env.*
+
+# 个人生词、缓存与导出内容
+vocabulary.db
+vocabulary.db-*
+exports/
 
 # Python
 __pycache__/

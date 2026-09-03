@@ -41,8 +41,9 @@ than relying on this notice.
 
 ---
 
-Simplified-to-Traditional Chinese conversion is performed at dictionary build
-time only; the converter is not redistributed and is not required at runtime.
+Simplified-to-Traditional Chinese conversion is available only as an optional
+compatibility flag during dictionary build. Simplified Chinese is the default.
+The converter is not redistributed and is not required at runtime.
 
   OpenCC / opencc-python-reimplemented
   https://github.com/BYVoid/OpenCC
@@ -52,6 +53,20 @@ Runtime dependencies, installed from PyPI by the user:
 
   winsdk    - Python projection of the Windows Runtime APIs (Windows.Media.Ocr)
   pywin32   - Python for Windows Extensions (SAPI speech synthesis)
+
+
+Optional online service
+-----------------------
+
+Oxford Dictionaries API
+https://developer.oxforddictionaries.com/
+
+Oxford content is not bundled, cached in this repository, or redistributed by
+this project. Users who enable the optional provider supply their own App ID
+and App Key and are responsible for complying with the Oxford API terms for
+their account. Runtime requests send only the normalized lookup word to the
+official Oxford endpoint. Credentials are transmitted as HTTPS request headers
+and are not written to the source tree or vocabulary database.
 
 Everything else in this repository is original work covered by the MIT License
 in the LICENSE file.
